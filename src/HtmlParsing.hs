@@ -30,21 +30,19 @@ module HtmlParsing where
   hasContent :: Cursor -> Bool
   hasContent c = (length (content c)) > 0
 
-  symbolFile  = "/Users/nlim/Downloads/stockSymbols/investable.csv"
-
-  type ExportValue = (String, String, Float, Float, Float)
+  type ExportValue = (String, String, Float, Float, Float, Float)
 
   toCsvLine :: ExportValue -> String
-  toCsvLine (s, s2, f, f2, f3) = intercalate "," [s, s2, (showFFloat Nothing f) "", (showFFloat Nothing f2) "", (showFFloat Nothing f3) ""]
+  toCsvLine (s, s2, f, f2, f3, f4) = intercalate "," [s, s2, (showFFloat Nothing f) "", (showFFloat Nothing f2) "", (showFFloat Nothing f3) "", (showFFloat Nothing f4) ""]
 
-  exportData ::  IO ()
-  exportData = do
-    allsymbols <- lookupAllSymbols
+  exportData :: String -> IO ()
+  exportData symbolFile = do
+    allsymbols <- lookupAllSymbols symbolFile
     let symbols = allsymbols --take 200 allsymbols
     chan <- CMSTM.atomically $ newTChan
     tvar <- newTVarIO 0
     forkIO $ writeFromTChan toCsvLine "/Users/nlim/Desktop/results.txt" chan
-    let mappedOut = splitNPieces 1000 symbols
+    let mappedOut = splitNPieces 200 symbols
     mapM_ (\ss -> forkChild tvar $ writeOutAllResults chan ss) mappedOut
     waitForWorkers tvar
     putStrLn $ "Done waiting for workers"
@@ -68,13 +66,13 @@ module HtmlParsing where
   modList :: Int -> Int -> [a] -> [a]
   modList n t as = fmap snd $ Prelude.filter (\tuple -> (mod (fst tuple) t) == n) $ zip [0..] as
 
-  lookupAllSymbolsWithIndex :: IO [(Int, String)]
-  lookupAllSymbolsWithIndex = do
-    symbols <- lookupAllSymbols
+  lookupAllSymbolsWithIndex :: String -> IO [(Int, String)]
+  lookupAllSymbolsWithIndex symbolFile = do
+    symbols <- lookupAllSymbols symbolFile
     return $ zip [0..] symbols
 
-  lookupAllSymbols :: IO [String]
-  lookupAllSymbols = do
+  lookupAllSymbols :: String -> IO [String]
+  lookupAllSymbols symbolFile = do
     lines <- readUntilEnd symbolFile
     let splitOut = fmap (splitOn ",") lines
         symbols  = fmap ( (Prelude.filter (/='/')) . (Prelude.filter (/=' ')) . stripQuotes. head) splitOut
@@ -94,16 +92,16 @@ module HtmlParsing where
   stripQuotes :: String -> String
   stripQuotes = Prelude.filter (/= '\"')
 
-  yieldData2  :: String -> IO (Maybe (String, String, Float, Float, Float))
+  yieldData2  :: String -> IO (Maybe (String, String, Float, Float, Float, Float))
   yieldData2 s = do
-    vMaybe     <- enterpriseValueAndMarketCap s
+    vMaybe     <- enterpriseValueAndMarketCapDeq s
     oiMaybe     <- lookupIncome s
     sectorMaybe <- lookupSector s
     return $ do
-      (em, mc)  <- vMaybe
-      oi        <- oiMaybe
-      sector    <- sectorMaybe
-      return (s, sector, em, mc, oi)
+      (ev, mc, deq) <- vMaybe
+      oi            <- oiMaybe
+      sector        <- sectorMaybe
+      return (s, sector, ev, mc, oi, deq)
 
   maybeRead :: Read a => String -> Maybe a
   maybeRead = fmap fst . listToMaybe . reads
@@ -118,7 +116,7 @@ module HtmlParsing where
   incomeUrl2 s  = "http://finance.yahoo.com/q/is?s=" ++ s
 
   balanceSheetUrl :: String -> String
-  balanceSheetUrl s = "http://finance.yahoo.com/q/bs?s=" ++ s ++ "+Balance+Sheet&annual"
+  balanceSheetUrl s = "http://finance.yahoo.com/q/bs?s=" ++ s ++ "+Balance+Sheet"
 
   removeCrap1 :: String -> String
   removeCrap1 s = Pr.concat $ splitOn "\\n" s
@@ -164,14 +162,16 @@ module HtmlParsing where
         noCommas = fmap (Prelude.filter (/= ',')) filtered
         withNs   = zip [1..] noCommas
 
-    return $ do
-      q1 <- fmap (1000.0 * ) $ floatAt 4 noCommas
-      q2 <- fmap (1000.0 * ) $ floatAt 5 noCommas
-      q3 <- fmap (1000.0 * ) $ floatAt 6 noCommas
-      q4 <- fmap (1000.0 * ) $ floatAt 45 noCommas
-      q5 <- fmap (1000.0 * ) $ floatAt 46 noCommas
-      q6 <- fmap (1000.0 * ) $ floatAt 47 noCommas
-      return $ ((q1, q2, q3), (q4, q5, q6))
+    return noCommas
+
+    -- return $ do
+    --   q1 <- fmap (1000.0 * ) $ floatAt 4 noCommas
+    --   q2 <- fmap (1000.0 * ) $ floatAt 5 noCommas
+    --   q3 <- fmap (1000.0 * ) $ floatAt 6 noCommas
+    --   q4 <- fmap (1000.0 * ) $ floatAt 45 noCommas
+    --   q5 <- fmap (1000.0 * ) $ floatAt 46 noCommas
+    --   q6 <- fmap (1000.0 * ) $ floatAt 47 noCommas
+    --   return $ ((q1, q2, q3), (q4, q5, q6))
 
   sectorUrl :: String -> String
   sectorUrl s = "http://finance.yahoo.com/q/in?s=" ++ s
@@ -208,11 +208,12 @@ module HtmlParsing where
     c <- listToMaybe (drop (i-1) cs)
     parseFloatWithMultiplier c
 
-  enterpriseValueAndMarketCap :: String -> IO (Maybe (Float, Float))
-  enterpriseValueAndMarketCap s = lookupMultipleData s $ \css -> do
-    mc <- floatAt 1 css
-    em <- floatAt 2 css
-    return (em, mc)
+  enterpriseValueAndMarketCapDeq :: String -> IO (Maybe (Float, Float, Float))
+  enterpriseValueAndMarketCapDeq s = lookupMultipleData s $ \css -> do
+    mc  <- floatAt 1 css
+    em  <- floatAt 2 css
+    deq <- floatAt 27 css
+    return (em, mc, deq / 100)
 
   lookupMultipleData :: String -> ([String] -> Maybe a) -> IO (Maybe a)
   lookupMultipleData s f = do

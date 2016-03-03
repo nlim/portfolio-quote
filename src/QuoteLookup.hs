@@ -14,19 +14,21 @@ module QuoteLookup where
   import Debug.Trace
   import Spacer (printLines)
   import TransactionLoading
+  import GHC.Exts (sortWith)
 
   type TransactionType = (String, (Float, Float))
   type TransactionTotals = Map String (Float, Float)
 
-  data QuoteRaw = QuoteRaw { symbolRaw :: String, prevCloseRaw :: String, priceRaw:: String, dividendShareRaw :: Maybe String} deriving (Show)
-  data Quote = Quote { symbol :: String , prevClose :: Float, price :: Float, dividendShare :: Float } deriving (Show)
+  data QuoteRaw = QuoteRaw { symbolRaw :: String, prevCloseRaw :: String, priceRaw:: String, dividendShareRaw :: Maybe String, earningShareRaw :: Maybe String} deriving (Show)
+  data Quote = Quote { symbol :: String , prevClose :: Float, price :: Float, dividendShare :: Float, earningShare :: Float } deriving (Show)
 
   toQuote :: QuoteRaw -> Maybe Quote
   toQuote qr = do
     p  <- (maybeRead $ priceRaw qr)
     pc <- (maybeRead $ prevCloseRaw qr)
     let dy = (dividendShareRaw qr) >>= maybeFloat
-    return $ Quote (symbolRaw qr) pc p (maybe 0.0 id dy)
+    let ey = (earningShareRaw qr)  >>= maybeFloat
+    return $ Quote (symbolRaw qr) pc p (maybe 0.0 id dy) (maybe 0.0 id ey)
 
   maybeFloat :: String -> Maybe Float
   maybeFloat = maybeRead
@@ -37,6 +39,7 @@ module QuoteLookup where
   quoteLastValue   = metric (\q (n,p) -> n * (prevClose q))
   quoteValue       = metric (\q (n,p) -> n * (price q))
   quoteDividend    = metric (\q (n,p) -> n * (dividendShare q))
+  quoteEarning     = metric (\q (n,p) -> n * (earningShare q))
   quoteCost        = metric (\q (n,p) -> n * p)
   quoteDayDiff     = metric (\q (n,p) -> n * ((price q) - prevClose q))
   quoteDayPercent  = metric (\q (n,p) -> 100.0 * ((price q) / (prevClose q)) - 100.0)
@@ -48,6 +51,7 @@ module QuoteLookup where
   portfolioValue tt      = portfolioMetric (quoteValue tt) tt
   portfolioLastValue tt  = portfolioMetric (quoteLastValue tt) tt
   portfolioDividend tt   = portfolioMetric (quoteDividend tt) tt
+  portfolioEarning tt    = portfolioMetric (quoteEarning tt) tt
 
   portfolioCost :: TransactionTotals -> Float
   portfolioCost tt = sum $ fmap (\(n, p) -> n * p) (Data.Map.elems tt)
@@ -67,34 +71,44 @@ module QuoteLookup where
   signedShow a = show a
 
   toRows :: FinalResult -> [StockResult] -> [[String]]
-  toRows tt srs = ["Symbol", "Previous Close", "Price", "% of Portfolio", "YearlyDividend", "Today's % Change", "Today's $ Change", "Total $ Change"] : (fmap (toRow tt) srs)
+  toRows tt srs = ["Symbol", "Previous Close", "Price", "% of Portfolio", "YearlyDividend", "YearlyEarning", "Today's % Change", "Today's $ Change", "Total $ Change", "Total $ Amount"] : (fmap (toRow tt) (reverse (sortWith (percentPortfolio tt) srs)))
+
+  percentPortfolio :: FinalResult -> StockResult -> Float
+  percentPortfolio fr sr = (100.0 * ((totalDollarAmount sr) / (totalValue fr)))
 
   toRow :: FinalResult -> StockResult -> [String]
   toRow fr sr = [
                symbol $ quoteResult sr,
                show $ prevClose $ quoteResult sr,
                show $ price $ quoteResult sr,
-               show $ (100.0 * ((totalDollarAmount sr) / (totalValue fr))),
+               show $ percentPortfolio fr sr,
                show $ dividendShare $ quoteResult sr,
+               show $ earningShare $ quoteResult sr,
                signedShow $ todaysPercentChange sr,
                signedShow $ todaysDollarChange  sr,
-               signedShow $ totalDollarChange sr
+               signedShow $ totalDollarChange sr,
+               show $ totalDollarAmount sr
              ]
 
-  data FinalResult = FinalResult { totalCostBasis :: Float, yearlyDividend :: Float, totalPercent :: Float, totalChange :: Float, todaysPercent :: Float, todaysChange :: Float, stockResults ::  V.Vector StockResult, totalValue :: Float } deriving (Show)
+  data FinalResult = FinalResult { totalCostBasis :: Float, yearlyDividend :: Float, yearlyEarning :: Float, totalPercent :: Float, totalChange :: Float, todaysPercent :: Float, todaysChange :: Float, stockResults ::  V.Vector StockResult, totalValue :: Float } deriving (Show)
 
   runRequest :: FilePath -> IO (Maybe FinalResult)
-  runRequest f = withManager defaultManagerSettings $ runAndParse f yqlUrl2
+  runRequest f = do
+    m <- newManager defaultManagerSettings
+    runAndParse f yqlUrl2 m
+  --runRequest f = withManager defaultManagerSettings $ runAndParse f yqlUrl2
 
   printResult :: FinalResult -> IO ()
   printResult fr = do
     putStrLn $ "Total Cost Basis:      " ++ (show $ totalCostBasis fr)
-    putStrLn $ "Dividend Per Year:     " ++ (show $ yearlyDividend fr)
-    putStrLn $ "DY At Cost:            " ++ (show $ 100.0 * ((yearlyDividend fr) / (totalCostBasis fr)))
+    putStrLn $ "Total Value:           " ++ (show $ totalValue fr)
     putStrLn $ "Total Percent Change:  " ++ (show $ totalPercent fr)
     putStrLn $ "Total Change:          " ++ (show $ totalChange fr)
     putStrLn $ "Todays Percent Change: " ++ (show $ todaysPercent fr)
     putStrLn $ "Todays Change:         " ++ (show $ todaysChange fr)
+    putStrLn $ "Dividend Per Year:     " ++ (show $ yearlyDividend fr)
+    putStrLn $ "Earning Per Year:      " ++ (show $ yearlyEarning fr)
+    putStrLn $ "DY At Cost:            " ++ (show $ 100.0 * ((yearlyDividend fr) / (totalCostBasis fr)))
     printLines $ (toRows fr) $ V.toList $ stockResults fr
 
   runAndParse :: FilePath -> (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
@@ -107,18 +121,19 @@ module QuoteLookup where
       run r = do
         transactions <- readTransactions f
         let portfolio = mkPortfolio transactions
-        response  <- (httpLbs r m)
+        response  <- httpLbs r m
         return $ do
          v <- responseToQuotes response
          let pv  = portfolioValue portfolio v
              pc  = portfolioCost portfolio
              plv = portfolioLastValue portfolio v
              pd  = portfolioDividend portfolio v
+             pe  = portfolioEarning portfolio v
              percent = (100.0 * (pv / pc)) - 100.0
              change  = pv - pc
              tPercent = (100.0 * (pv / plv)) - 100.0
              tChange  = pv - plv
-         return $ FinalResult pc pd percent change tPercent tChange (fmap (toStockResult portfolio) v) pv
+         return $ FinalResult pc pd pe percent change tPercent tChange (fmap (toStockResult portfolio) v) pv
 
   symbols :: TransactionTotals -> [String]
   symbols tt = Data.Map.keys tt
@@ -157,7 +172,7 @@ module QuoteLookup where
 
 
   parseQuote :: Object -> Parser QuoteRaw
-  parseQuote v = QuoteRaw <$> v .: "Symbol" <*> v .: "PreviousClose" <*> v .: "LastTradePriceOnly" <*> v .: "DividendShare"
+  parseQuote v = QuoteRaw <$> v .: "Symbol" <*> v .: "PreviousClose" <*> v .: "LastTradePriceOnly" <*> v .: "DividendShare" <*> v.: "EarningsShare"
 
   responseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
   responseToQuotes r = (parseMyResult r) >>= (toQuotes)

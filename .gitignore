@@ -2,3 +2,4 @@
 **/*.hi
 **/*.swo
 dist/
+.stack-work/
