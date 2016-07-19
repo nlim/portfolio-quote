@@ -31,18 +31,6 @@ module ChanTesting where
     waitForWorkers tvar
     putStrLn $ "Done waiting for workers"
 
-  --runChanGeneral :: [IO ()] -> IO () -> IO () =
-  --runChanGeneral writingWork readingRoutine = do
-  --  tvar <- newTVarIO 0
-  --  chan <- atomically $ newTChan
-  --  forkIO $ printer tvar
-  --  forkIO $ readerThread 0 chan
-  --  mapM_ (\_ -> forkChild tvar $ writerThread chan) [1..10]
-  --  waitForWorkers tvar
-  --  putStrLn $ "Done waiting for workers"
-
-
-
   printer :: (TVar Int) -> IO ()
   printer tvar = do
     threadDelay $ 1 * oneSecond

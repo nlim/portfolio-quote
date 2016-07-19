@@ -1,4 +1,4 @@
-module TransactionLoading (readUntilEnd, readTransactions, Transaction, writeAllResults, writeFromTChan) where
+module TransactionLoading (readUntilEnd, readTransactions, readTransactionsFromStdin, readTransactionsFromFile, Transaction, writeAllResults, writeFromTChan) where
   import Control.Monad (replicateM, forever)
   import System.IO
   import Data.Maybe (catMaybes, listToMaybe)
@@ -21,18 +21,24 @@ module TransactionLoading (readUntilEnd, readTransactions, Transaction, writeAll
     return $ Transaction s number price
   toTransaction _ = Nothing
 
-  readTransactions :: FilePath -> IO [(String, (Float, Float))]
-  readTransactions f = do
-    mts <- readTransactions' f
+  readTransactionsFromFile :: FilePath -> IO [(String, (Float, Float))]
+  readTransactionsFromFile f = withFile f ReadMode $ readTransactions
+
+  readUntilEnd :: FilePath -> IO [String]
+  readUntilEnd f = withFile f ReadMode $ readUntilEnd' []
+
+  readTransactionsFromStdin :: IO [(String, (Float, Float))]
+  readTransactionsFromStdin = readTransactions stdin
+
+  readTransactions :: Handle -> IO [(String, (Float, Float))]
+  readTransactions h = do
+    mts <- readTransactions' h
     return $ fmap (\t -> (transSymbol t, (transShares t, transPrice t))) $ catMaybes mts
 
-  readTransactions' :: FilePath -> IO [Maybe Transaction]
+  readTransactions' :: Handle -> IO [Maybe Transaction]
   readTransactions' f = do
-    lines <- readUntilEnd f
+    lines <- readUntilEnd' [] f
     return  $ fmap (toTransaction . (splitOn ",")) lines
-
-  readUntilEnd  :: FilePath -> IO [String]
-  readUntilEnd f = withFile f ReadMode $ readUntilEnd' []
 
   readUntilEnd' :: [String] -> Handle -> IO [String]
   readUntilEnd' soFar h = do

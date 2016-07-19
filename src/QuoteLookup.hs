@@ -15,6 +15,7 @@ module QuoteLookup where
   import Spacer (printLines)
   import TransactionLoading
   import GHC.Exts (sortWith)
+  import System.IO (stdin)
 
   type TransactionType = (String, (Float, Float))
   type TransactionTotals = Map String (Float, Float)
@@ -96,7 +97,11 @@ module QuoteLookup where
   runRequest f = do
     m <- newManager defaultManagerSettings
     runAndParse f yqlUrl2 m
-  --runRequest f = withManager defaultManagerSettings $ runAndParse f yqlUrl2
+
+  runRequestStdin :: IO (Maybe FinalResult)
+  runRequestStdin = do
+    m <- newManager defaultManagerSettings
+    runAndParseFromStdin yqlUrl2 m
 
   printResult :: FinalResult -> IO ()
   printResult fr = do
@@ -111,29 +116,35 @@ module QuoteLookup where
     putStrLn $ "DY At Cost:            " ++ (show $ 100.0 * ((yearlyDividend fr) / (totalCostBasis fr)))
     printLines $ (toRows fr) $ V.toList $ stockResults fr
 
+  runAndParseFromStdin :: (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
+  runAndParseFromStdin = runAndParseGeneral (readTransactionsFromStdin)
+
   runAndParse :: FilePath -> (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
-  runAndParse f tmr m = do
-    transactions <- readTransactions f
-    let portfolio = mkPortfolio transactions
-        mr        = tmr portfolio
-    maybe (return Nothing) run mr where
-      run :: Request -> IO (Maybe FinalResult)
-      run r = do
-        transactions <- readTransactions f
-        let portfolio = mkPortfolio transactions
-        response  <- httpLbs r m
-        return $ do
-         v <- responseToQuotes response
-         let pv  = portfolioValue portfolio v
-             pc  = portfolioCost portfolio
-             plv = portfolioLastValue portfolio v
-             pd  = portfolioDividend portfolio v
-             pe  = portfolioEarning portfolio v
-             percent = (100.0 * (pv / pc)) - 100.0
-             change  = pv - pc
-             tPercent = (100.0 * (pv / plv)) - 100.0
-             tChange  = pv - plv
-         return $ FinalResult pc pd pe percent change tPercent tChange (fmap (toStockResult portfolio) v) pv
+  runAndParse f = runAndParseGeneral (readTransactionsFromFile f)
+
+  runAndParseGeneral :: IO [(String, (Float, Float))] -> (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
+  runAndParseGeneral transactionsIO tmr m = do
+    transactions <- transactionsIO
+    let portfolio  = mkPortfolio transactions
+        mr         = tmr portfolio
+    maybe (return Nothing) (mkRun m transactions portfolio) mr where
+
+
+  mkRun :: Manager -> [(String, (Float, Float))] -> TransactionTotals -> Request -> IO (Maybe FinalResult)
+  mkRun m transactions portfolio r = do
+    response  <- httpLbs r m
+    return $ do
+     v <- responseToQuotes response
+     let pv  = portfolioValue portfolio v
+         pc  = portfolioCost portfolio
+         plv = portfolioLastValue portfolio v
+         pd  = portfolioDividend portfolio v
+         pe  = portfolioEarning portfolio v
+         percent = (100.0 * (pv / pc)) - 100.0
+         change  = pv - pc
+         tPercent = (100.0 * (pv / plv)) - 100.0
+         tChange  = pv - plv
+     return $ FinalResult pc pd pe percent change tPercent tChange (fmap (toStockResult portfolio) v) pv
 
   symbols :: TransactionTotals -> [String]
   symbols tt = Data.Map.keys tt

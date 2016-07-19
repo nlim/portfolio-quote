@@ -55,6 +55,12 @@ executable get-quote
   build-depends: base, portfolio-quote
   default-language:    Haskell2010
 
+executable get-quote-stdin
+  hs-source-dirs: main
+  main-is: GetQuoteStdin.hs
+  build-depends: base, portfolio-quote
+  default-language:    Haskell2010
+
 executable run-chan-test
   hs-source-dirs: main
   main-is: ChanTestMain.hs

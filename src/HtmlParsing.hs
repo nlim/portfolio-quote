@@ -35,13 +35,15 @@ module HtmlParsing where
   toCsvLine :: ExportValue -> String
   toCsvLine (s, s2, f, f2, f3, f4) = intercalate "," [s, s2, (showFFloat Nothing f) "", (showFFloat Nothing f2) "", (showFFloat Nothing f3) "", (showFFloat Nothing f4) ""]
 
-  exportData :: String -> IO ()
-  exportData symbolFile = do
+---outputFile = "/Users/nlim/Desktop/results.txt"
+--
+  exportData :: String -> String -> IO ()
+  exportData symbolFile outputFile = do
     allsymbols <- lookupAllSymbols symbolFile
     let symbols = allsymbols --take 200 allsymbols
     chan <- CMSTM.atomically $ newTChan
     tvar <- newTVarIO 0
-    forkIO $ writeFromTChan toCsvLine "/Users/nlim/Desktop/results.txt" chan
+    forkIO $ writeFromTChan toCsvLine outputFile chan
     let mappedOut = splitNPieces 200 symbols
     mapM_ (\ss -> forkChild tvar $ writeOutAllResults chan ss) mappedOut
     waitForWorkers tvar
@@ -158,20 +160,17 @@ module HtmlParsing where
   lookupBalanceSheet s = do
     cursor <- cursorFor $ balanceSheetUrl s
     let css = cursor $// (element "td" &.// element "strong" &.// check hasContent) &| extractData
-        filtered = fmap (removeCrap .  (Prelude.filter (/='"')) . (Prelude.filter (/=' ')) . show) css
-        noCommas = fmap (Prelude.filter (/= ',')) filtered
-        withNs   = zip [1..] noCommas
-
-    return noCommas
-
-    -- return $ do
-    --   q1 <- fmap (1000.0 * ) $ floatAt 4 noCommas
-    --   q2 <- fmap (1000.0 * ) $ floatAt 5 noCommas
-    --   q3 <- fmap (1000.0 * ) $ floatAt 6 noCommas
-    --   q4 <- fmap (1000.0 * ) $ floatAt 45 noCommas
-    --   q5 <- fmap (1000.0 * ) $ floatAt 46 noCommas
-    --   q6 <- fmap (1000.0 * ) $ floatAt 47 noCommas
-    --   return $ ((q1, q2, q3), (q4, q5, q6))
+    let filtered = fmap (removeCrap .  (Prelude.filter (/='"')) . (Prelude.filter (/=' ')) . show) css
+    let noCommas = fmap (Prelude.filter (/= ',')) filtered
+    let withNs   = zip [1..] noCommas
+    return $ do
+      q1 <- fmap (1000.0 * ) $ floatAt 4 noCommas
+      q2 <- fmap (1000.0 * ) $ floatAt 5 noCommas
+      q3 <- fmap (1000.0 * ) $ floatAt 6 noCommas
+      q4 <- fmap (1000.0 * ) $ floatAt 45 noCommas
+      q5 <- fmap (1000.0 * ) $ floatAt 46 noCommas
+      q6 <- fmap (1000.0 * ) $ floatAt 47 noCommas
+      return $ ((q1, q2, q3), (q4, q5, q6))
 
   sectorUrl :: String -> String
   sectorUrl s = "http://finance.yahoo.com/q/in?s=" ++ s

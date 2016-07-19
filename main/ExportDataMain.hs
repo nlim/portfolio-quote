@@ -6,6 +6,6 @@ module Main where
   main = do
     args <- getArgs
     case args of
-      (a:as) -> exportData a
-      []     -> putStrLn "No Symbol File provided"
+      (symbolFile:outputFile:as) -> exportData symbolFile outputFile
+      []     -> putStrLn "Symbol File, follwed by outputFile need to be provided"
 
