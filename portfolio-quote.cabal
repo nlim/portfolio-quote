@@ -45,7 +45,8 @@ library
     http-conduit,
     html-conduit,
     xml-conduit,
-    stm
+    stm,
+    rainbow
 
 
 

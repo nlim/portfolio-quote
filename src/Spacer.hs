@@ -1,7 +1,7 @@
 module Spacer where
   import Data.Foldable (maximum)
   import Data.List (transpose)
-
+  import Rainbow
 
   --[
   --  [0, 0, 0, 0, 0],     [0, 0, 0, 0, 0]
@@ -43,11 +43,26 @@ module Spacer where
     m :: Int
     m = maximum $ map length xs
 
+  printLinesPretty :: [[(String, Radiant)]] -> IO ()
+  printLinesPretty lines = mapM_ action formatted where
+    action :: [Chunk String] -> IO ()
+    action line = (mapM_ (putChunk) line) >> (putStrLn "")
+    formatted :: [[Chunk String]]
+    formatted = formatLines2 lines
 
+  formatLines2  :: [[(String, Radiant)]] -> [[Chunk String]]
+  formatLines2 = (transpose . formatLines2' . transpose)
 
+  formatLines2' :: [[(String, Radiant)]] -> [[Chunk String]]
+  formatLines2' = map formatLine2
 
+  formatLine2 :: [(String, Radiant)] -> [Chunk String]
+  formatLine2 values = map (fmap (pad m)) chunks2 where
+    chunks2 :: [Chunk String]
+    chunks2 = map fst chunks
 
+    chunks :: [(Chunk String, Int)]
+    chunks = map (\(s,rad) -> ((fore rad (chunk s)), length s)) values
 
-
-
-
+    m :: Int
+    m = maximum $ fmap snd chunks

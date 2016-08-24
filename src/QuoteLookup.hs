@@ -12,10 +12,11 @@ module QuoteLookup where
   import Data.Maybe (listToMaybe)
   import Data.Traversable (traverse)
   import Debug.Trace
-  import Spacer (printLines)
+  import Spacer (printLines, printLinesPretty)
   import TransactionLoading
   import GHC.Exts (sortWith)
   import System.IO (stdin)
+  import qualified Rainbow as R
 
   type TransactionType = (String, (Float, Float))
   type TransactionTotals = Map String (Float, Float)
@@ -71,25 +72,51 @@ module QuoteLookup where
   signedShow a | a > (fromIntegral 0) = '+' : (show a)
   signedShow a = show a
 
-  toRows :: FinalResult -> [StockResult] -> [[String]]
-  toRows tt srs = ["Symbol", "Previous Close", "Price", "% of Portfolio", "YearlyDividend", "YearlyEarning", "Today's % Change", "Today's $ Change", "Total $ Change", "Total $ Amount"] : (fmap (toRow tt) (reverse (sortWith (percentPortfolio tt) srs)))
+  type ToRow a = FinalResult -> StockResult -> [a]
+
+  headers :: [String]
+  headers = ["Symbol", "Previous Close", "Price", "% of Portfolio", "YearlyDividend", "YearlyEarning", "Today's % Change", "Today's $ Change", "Total $ Change", "Total $ Amount"]
+
+  toRows3 :: FinalResult -> [StockResult] -> [[(String, R.Radiant)]]
+  toRows3 fr srs = (fmap (\s -> (s, R.white)) headers) : (toRows' toRow fr srs)
+
+  toRows' :: (ToRow a) -> FinalResult -> [StockResult] -> [[a]]
+  toRows' tr tt srs = (fmap (tr tt) (reverse (sortWith (percentPortfolio tt) srs)))
 
   percentPortfolio :: FinalResult -> StockResult -> Float
   percentPortfolio fr sr = (100.0 * ((totalDollarAmount sr) / (totalValue fr)))
 
-  toRow :: FinalResult -> StockResult -> [String]
+  mkWhite :: (Num a, Ord a) => (a, a -> String) -> (String, R.Radiant)
+  mkWhite (a, f) = (f a, R.white)
+
+  colorize :: (Num a, Ord a) => (a, a -> String) -> (String, R.Radiant)
+  colorize (a, f) = (s, computeRad a) where
+    s :: String
+    s = f a
+
+  printColorized :: (Num a, Ord a) => (a, a -> String) -> IO ()
+  printColorized = R.putChunkLn . (\(s, rad) -> R.fore rad (R.chunk s)) . colorize
+
+  computeRad :: (Num a, Ord a) => a -> R.Radiant
+  computeRad a = case (compare a (fromIntegral 0)) of
+                   LT -> R.red
+                   GT -> R.green
+                   EQ -> R.white
+
+  toRow :: ToRow (String, R.Radiant)
   toRow fr sr = [
-               symbol $ quoteResult sr,
-               show $ prevClose $ quoteResult sr,
-               show $ price $ quoteResult sr,
-               show $ percentPortfolio fr sr,
-               show $ dividendShare $ quoteResult sr,
-               show $ earningShare $ quoteResult sr,
-               signedShow $ todaysPercentChange sr,
-               signedShow $ todaysDollarChange  sr,
-               signedShow $ totalDollarChange sr,
-               show $ totalDollarAmount sr
+               (symbol $ quoteResult sr, computeRad $ todaysDollarChange sr),
+               mkWhite $ (prevClose $ quoteResult sr, show),
+               mkWhite $ (price $ quoteResult sr, show),
+               mkWhite $ (percentPortfolio fr sr, show),
+               mkWhite $ (dividendShare $ quoteResult sr, show),
+               mkWhite $ (earningShare $ quoteResult sr, show),
+               colorize $ (todaysPercentChange sr, signedShow),
+               colorize $ (todaysDollarChange  sr, signedShow),
+               colorize $ (totalDollarChange sr, signedShow),
+               mkWhite $ (totalDollarAmount sr, show)
              ]
+
 
   data FinalResult = FinalResult { totalCostBasis :: Float, yearlyDividend :: Float, yearlyEarning :: Float, totalPercent :: Float, totalChange :: Float, todaysPercent :: Float, todaysChange :: Float, stockResults ::  V.Vector StockResult, totalValue :: Float } deriving (Show)
 
@@ -107,14 +134,14 @@ module QuoteLookup where
   printResult fr = do
     putStrLn $ "Total Cost Basis:      " ++ (show $ totalCostBasis fr)
     putStrLn $ "Total Value:           " ++ (show $ totalValue fr)
-    putStrLn $ "Total Percent Change:  " ++ (show $ totalPercent fr)
-    putStrLn $ "Total Change:          " ++ (show $ totalChange fr)
-    putStrLn $ "Todays Percent Change: " ++ (show $ todaysPercent fr)
-    putStrLn $ "Todays Change:         " ++ (show $ todaysChange fr)
+    (putStr    "Total Percent Change:  ") >> (printColorized (totalPercent fr, show))
+    (putStr    "Total Change:          ") >> (printColorized (totalChange fr, show))
+    (putStr    "Todays Percent Change: ") >> (printColorized (todaysPercent fr, show))
+    (putStr    "Todays Change:         ") >> (printColorized (todaysChange fr, show))
     putStrLn $ "Dividend Per Year:     " ++ (show $ yearlyDividend fr)
     putStrLn $ "Earning Per Year:      " ++ (show $ yearlyEarning fr)
     putStrLn $ "DY At Cost:            " ++ (show $ 100.0 * ((yearlyDividend fr) / (totalCostBasis fr)))
-    printLines $ (toRows fr) $ V.toList $ stockResults fr
+    printLinesPretty $ (toRows3 fr) $ V.toList $ stockResults fr
 
   runAndParseFromStdin :: (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
   runAndParseFromStdin = runAndParseGeneral (readTransactionsFromStdin)
