@@ -5,6 +5,7 @@ module QuoteLookup where
   import Data.Aeson
   import Data.Aeson.Types
   import Data.ByteString.Lazy (ByteString)
+  import qualified Data.ByteString.Lazy.Char8 as C
   import Data.Text (Text)
   import qualified Data.Vector as V (Vector, toList)
   import Data.List (intersperse, intercalate, foldl')
@@ -36,7 +37,7 @@ module QuoteLookup where
   maybeFloat = maybeRead
 
   metric :: (Quote -> (Float, Float) -> Float) -> TransactionTotals -> Quote -> Float
-  metric metric' tt q = maybe 0.0 (metric' q) $ Data.Map.lookup (symbol q) tt
+  metric metric' tt q = maybe 0.0 (metric' q) $ (Data.Map.lookup (symbol q) tt) <|> (Data.Map.lookup ("BATS:" ++ (symbol q)) tt)
 
   quoteLastValue   = metric (\q (n,p) -> n * (prevClose q))
   quoteValue       = metric (\q (n,p) -> n * (price q))
@@ -123,12 +124,12 @@ module QuoteLookup where
   runRequest :: FilePath -> IO (Maybe FinalResult)
   runRequest f = do
     m <- newManager defaultManagerSettings
-    runAndParse f yqlUrl2 m
+    runAndParse f googleUrl m
 
   runRequestStdin :: IO (Maybe FinalResult)
   runRequestStdin = do
     m <- newManager defaultManagerSettings
-    runAndParseFromStdin yqlUrl2 m
+    runAndParseFromStdin googleUrl m
 
   printResult :: FinalResult -> IO ()
   printResult fr = do
@@ -154,14 +155,14 @@ module QuoteLookup where
     transactions <- transactionsIO
     let portfolio  = mkPortfolio transactions
         mr         = tmr portfolio
-    maybe (return Nothing) (mkRun m transactions portfolio) mr where
+    maybe (return Nothing) (mkRun m transactions portfolio googleResponseToQuotes) mr where
 
 
-  mkRun :: Manager -> [(String, (Float, Float))] -> TransactionTotals -> Request -> IO (Maybe FinalResult)
-  mkRun m transactions portfolio r = do
+  mkRun :: Manager -> [(String, (Float, Float))] -> TransactionTotals -> (Response ByteString -> Maybe (V.Vector Quote)) -> Request -> IO (Maybe FinalResult)
+  mkRun m transactions portfolio parser r = do
     response  <- httpLbs r m
     return $ do
-     v <- responseToQuotes response
+     v <- parser response
      let pv  = portfolioValue portfolio v
          pc  = portfolioCost portfolio
          plv = portfolioLastValue portfolio v
@@ -190,7 +191,10 @@ module QuoteLookup where
   symbolsString tt = intercalate "%2C" $ fmap (\s -> "%22" ++ s ++ "%22") $ symbols tt
 
   yqlUrl2 :: TransactionTotals -> Maybe Request
-  yqlUrl2 tt = parseUrl $ "http://query.yahooapis.com/v1/public/yql?q=select%20*%20from%20yahoo.finance.quotes%20where%20symbol%20in%20(" ++ (symbolsString tt) ++ ")%0A%09%09&format=json&diagnostics=true&env=http%3A%2F%2Fdatatables.org%2Falltables.env"
+  yqlUrl2 tt = parseRequest $ "http://query.yahooapis.com/v1/public/yql?q=select%20*%20from%20yahoo.finance.quotes%20where%20symbol%20in%20(" ++ (symbolsString tt) ++ ")%0A%09%09&format=json&diagnostics=true&env=http%3A%2F%2Fdatatables.org%2Falltables.env"
+
+  googleUrl :: TransactionTotals -> Maybe Request
+  googleUrl tt = parseRequest $ "http://finance.google.com/finance/info?client=ig&q=" ++ (intercalate "," $ symbols tt)
 
   parseObjects :: Array -> Parser (V.Vector Object)
   parseObjects arr = traverse parseJSON arr
@@ -208,12 +212,32 @@ module QuoteLookup where
     tuples  <- traverse parseQuote objects
     return tuples
 
+  parseQuotesGoogle :: Value -> Parser (V.Vector QuoteRaw)
+  parseQuotesGoogle v = do
+    arr     <- parseArray v
+    objects <- parseObjects arr
+    tuples  <- traverse parseQuoteGoogle objects
+    return tuples
 
   parseQuote :: Object -> Parser QuoteRaw
   parseQuote v = QuoteRaw <$> v .: "Symbol" <*> v .: "PreviousClose" <*> v .: "LastTradePriceOnly" <*> v .: "DividendShare" <*> v.: "EarningsShare"
 
+  parseQuoteGoogle :: Object -> Parser QuoteRaw
+  parseQuoteGoogle v = QuoteRaw <$> v .: "t" <*> v .: "pcls_fix" <*> v .: "l" <*> (pure Nothing) <*> (pure Nothing)
+
   responseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
   responseToQuotes r = (parseMyResult r) >>= (toQuotes)
+
+  googleResponseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
+  googleResponseToQuotes r = (parseGoogle r) >>= (toQuotes)
+
+  parseGoogle :: Response ByteString -> Maybe MyResult
+  parseGoogle r = parseGoogleBS $ responseBody r
+
+  parseGoogleBS :: ByteString -> Maybe MyResult
+  parseGoogleBS bs = do
+    result <- decode (C.filter (\c -> c /= '/') bs) :: Maybe Value
+    flip parseMaybe result parseQuotesGoogle
 
   parseMyResult :: Response ByteString -> Maybe MyResult
   parseMyResult r = do result <- decode (responseBody r)
@@ -223,4 +247,3 @@ module QuoteLookup where
                          quote   <- results .: "quote"
                          tuples <- parseQuotes quote
                          return tuples
-
