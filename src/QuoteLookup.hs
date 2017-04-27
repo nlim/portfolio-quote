@@ -217,7 +217,14 @@ module QuoteLookup where
   parseQuote v = QuoteRaw <$> v .: "Symbol" <*> v .: "PreviousClose" <*> v .: "LastTradePriceOnly" <*> v .: "DividendShare" <*> v.: "EarningsShare"
 
   parseQuoteGoogle :: Object -> Parser QuoteRaw
-  parseQuoteGoogle v = QuoteRaw <$> v .: "t" <*> v .: "pcls_fix" <*> v .: "l" <*> (pure Nothing) <*> (pure Nothing)
+  parseQuoteGoogle v = QuoteRaw <$> v .: "t" <*> v .: "pcls_fix" <*> v .: "l" <*> (parseDividendGoogle v) <*> (pure Nothing)
+
+  parseDividendGoogle :: Object -> Parser (Maybe String)
+  parseDividendGoogle v = do
+    divString <- (v .: "div") <|> (pure "0.0")
+    let value = fmap (* 4.0) (maybeRead divString) :: Maybe Float
+    let stringValue = fmap show value
+    return $ stringValue
 
   googleResponseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
   googleResponseToQuotes r = (parseGoogle r) >>= (toQuotes)
