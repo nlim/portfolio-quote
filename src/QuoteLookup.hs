@@ -154,7 +154,7 @@ module QuoteLookup where
   runAndParseGeneral transactionsIO tmr m = do
     transactions <- transactionsIO
     let portfolio  = mkPortfolio transactions
-        mr         = tmr portfolio
+        mr        = tmr portfolio
     maybe (return Nothing) (mkRun m transactions portfolio googleResponseToQuotes) mr where
 
 
@@ -186,12 +186,6 @@ module QuoteLookup where
 
   mkPortfolio :: [TransactionType] -> TransactionTotals
   mkPortfolio transactions = Data.Map.map (\(n, p) -> (n, p / n)) $ totals transactions
-
-  symbolsString :: TransactionTotals -> String
-  symbolsString tt = intercalate "%2C" $ fmap (\s -> "%22" ++ s ++ "%22") $ symbols tt
-
-  yqlUrl2 :: TransactionTotals -> Maybe Request
-  yqlUrl2 tt = parseRequest $ "http://query.yahooapis.com/v1/public/yql?q=select%20*%20from%20yahoo.finance.quotes%20where%20symbol%20in%20(" ++ (symbolsString tt) ++ ")%0A%09%09&format=json&diagnostics=true&env=http%3A%2F%2Fdatatables.org%2Falltables.env"
 
   googleUrl :: TransactionTotals -> Maybe Request
   googleUrl tt = parseRequest $ "http://finance.google.com/finance/info?client=ig&q=" ++ (intercalate "," $ symbols tt)
@@ -225,9 +219,6 @@ module QuoteLookup where
   parseQuoteGoogle :: Object -> Parser QuoteRaw
   parseQuoteGoogle v = QuoteRaw <$> v .: "t" <*> v .: "pcls_fix" <*> v .: "l" <*> (pure Nothing) <*> (pure Nothing)
 
-  responseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
-  responseToQuotes r = (parseMyResult r) >>= (toQuotes)
-
   googleResponseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
   googleResponseToQuotes r = (parseGoogle r) >>= (toQuotes)
 
@@ -239,11 +230,5 @@ module QuoteLookup where
     result <- decode (C.filter (\c -> c /= '/') bs) :: Maybe Value
     flip parseMaybe result parseQuotesGoogle
 
-  parseMyResult :: Response ByteString -> Maybe MyResult
-  parseMyResult r = do result <- decode (responseBody r)
-                       flip parseMaybe result $ \obj -> do
-                         query   <- obj .: "query"
-                         results <- query .: "results"
-                         quote   <- results .: "quote"
-                         tuples <- parseQuotes quote
-                         return tuples
+  testBody :: ByteString
+  testBody = "// [ { \"id\": \"22144\" ,\"t\" : \"AAPL\" ,\"e\" : \"NASDAQ\" ,\"l\" : \"144.42\" ,\"l_fix\" : \"144.42\" ,\"l_cur\" : \"144.42\" ,\"s\": \"0\" ,\"ltt\":\"9:44AM EDT\" ,\"lt\" : \"Apr 26, 9:44AM EDT\" ,\"lt_dts\" : \"2017-04-26T09:44:07Z\" ,\"c\" : \"-0.11\" ,\"c_fix\" : \"-0.11\" ,\"cp\" : \"-0.08\" ,\"cp_fix\" : \"-0.08\" ,\"ccol\" : \"chr\" ,\"pcls_fix\" : \"144.53\" } ]"
