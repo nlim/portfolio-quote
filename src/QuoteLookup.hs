@@ -1,8 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module QuoteLookup where
   import Control.Applicative
+  import Control.Monad (mzero)
   import Network.HTTP.Client
   import Data.Aeson
+  import qualified Data.Csv as Csv
+  import Data.Either.Combinators (rightToMaybe)
   import Data.Aeson.Types
   import Data.ByteString.Lazy (ByteString)
   import qualified Data.ByteString.Lazy.Char8 as C
@@ -118,18 +121,17 @@ module QuoteLookup where
                mkWhite $ (totalDollarAmount sr, show)
              ]
 
-
   data FinalResult = FinalResult { totalCostBasis :: Float, yearlyDividend :: Float, yearlyEarning :: Float, totalPercent :: Float, totalChange :: Float, todaysPercent :: Float, todaysChange :: Float, stockResults ::  V.Vector StockResult, totalValue :: Float } deriving (Show)
 
   runRequest :: FilePath -> IO (Maybe FinalResult)
   runRequest f = do
     m <- newManager defaultManagerSettings
-    runAndParse f googleUrl m
+    runAndParse f yahooUrl m
 
   runRequestStdin :: IO (Maybe FinalResult)
   runRequestStdin = do
     m <- newManager defaultManagerSettings
-    runAndParseFromStdin googleUrl m
+    runAndParseFromStdin yahooUrl m
 
   printResult :: FinalResult -> IO ()
   printResult fr = do
@@ -145,10 +147,10 @@ module QuoteLookup where
     printLinesPretty $ (toRows3 fr) $ V.toList $ stockResults fr
 
   runAndParseFromStdin :: (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
-  runAndParseFromStdin = runAndParseGeneral (readTransactionsFromStdin)
+  runAndParseFromStdin = runAndParseGeneral2 (readTransactionsFromStdin)
 
   runAndParse :: FilePath -> (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
-  runAndParse f = runAndParseGeneral (readTransactionsFromFile f)
+  runAndParse f = runAndParseGeneral2 (readTransactionsFromFile f)
 
   runAndParseGeneral :: IO [(String, (Float, Float))] -> (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
   runAndParseGeneral transactionsIO tmr m = do
@@ -156,6 +158,14 @@ module QuoteLookup where
     let portfolio  = mkPortfolio transactions
         mr        = tmr portfolio
     maybe (return Nothing) (mkRun m transactions portfolio googleResponseToQuotes) mr where
+
+
+  runAndParseGeneral2 :: IO [(String, (Float, Float))] -> (TransactionTotals -> Maybe Request) -> Manager -> IO (Maybe FinalResult)
+  runAndParseGeneral2 transactionsIO tmr m = do
+    transactions <- transactionsIO
+    let portfolio  = mkPortfolio transactions
+        mr        = tmr portfolio
+    maybe (return Nothing) (mkRun m transactions portfolio yahooResponseToQuotes) mr where
 
 
   mkRun :: Manager -> [(String, (Float, Float))] -> TransactionTotals -> (Response ByteString -> Maybe (V.Vector Quote)) -> Request -> IO (Maybe FinalResult)
@@ -189,6 +199,9 @@ module QuoteLookup where
 
   googleUrl :: TransactionTotals -> Maybe Request
   googleUrl tt = parseRequest $ "http://finance.google.com/finance/info?client=ig&q=" ++ (intercalate "," $ symbols tt)
+
+  yahooUrl :: TransactionTotals -> Maybe Request
+  yahooUrl tt = parseRequest $ "http://download.finance.yahoo.com/d/quotes.csv?s=" ++ (intercalate "+" $ symbols tt) ++ "&f=spl1e8d"
 
   parseObjects :: Array -> Parser (V.Vector Object)
   parseObjects arr = traverse parseJSON arr
@@ -229,6 +242,9 @@ module QuoteLookup where
   googleResponseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
   googleResponseToQuotes r = (parseGoogle r) >>= (toQuotes)
 
+  yahooResponseToQuotes :: Response ByteString -> Maybe (V.Vector Quote)
+  yahooResponseToQuotes r = (parseYahoo r) >>= (toQuotes)
+
   parseGoogle :: Response ByteString -> Maybe MyResult
   parseGoogle r = parseGoogleBS $ responseBody r
 
@@ -236,6 +252,22 @@ module QuoteLookup where
   parseGoogleBS bs = do
     result <- decode (C.filter (\c -> c /= '/') bs) :: Maybe Value
     flip parseMaybe result parseQuotesGoogle
+
+  parseYahoo :: Response ByteString -> Maybe MyResult
+  parseYahoo r = parseYahooBS $ responseBody r
+
+  instance Csv.FromRecord QuoteRaw where
+      parseRecord v
+          | length v == 5 = QuoteRaw <$>
+                            (fmap (Prelude.filter (/='"')) (v Csv..! 0)) <*>
+                            v Csv..! 1 <*>
+                            v Csv..! 2 <*>
+                            v Csv..! 4 <*>
+                            v Csv..! 3
+          | otherwise     = mzero
+
+  parseYahooBS :: ByteString -> Maybe MyResult
+  parseYahooBS bs = rightToMaybe $ Csv.decode Csv.NoHeader bs
 
   testBody :: ByteString
   testBody = "// [ { \"id\": \"22144\" ,\"t\" : \"AAPL\" ,\"e\" : \"NASDAQ\" ,\"l\" : \"144.42\" ,\"l_fix\" : \"144.42\" ,\"l_cur\" : \"144.42\" ,\"s\": \"0\" ,\"ltt\":\"9:44AM EDT\" ,\"lt\" : \"Apr 26, 9:44AM EDT\" ,\"lt_dts\" : \"2017-04-26T09:44:07Z\" ,\"c\" : \"-0.11\" ,\"c_fix\" : \"-0.11\" ,\"cp\" : \"-0.08\" ,\"cp_fix\" : \"-0.08\" ,\"ccol\" : \"chr\" ,\"pcls_fix\" : \"144.53\" } ]"

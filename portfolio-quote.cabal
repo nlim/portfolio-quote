@@ -46,7 +46,9 @@ library
     html-conduit,
     xml-conduit,
     stm,
-    rainbow
+    rainbow,
+    cassava,
+    either
 
 
 
