@@ -10,6 +10,6 @@ dependencies:
     - stack build
     - stack build --test --only-dependencies
 
-  test:
-    override:
-      - stack test
+test:
+  override:
+    - stack test
