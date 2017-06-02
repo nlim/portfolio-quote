@@ -52,6 +52,4 @@ or run:
 get-quote positions.csv
 ```
 
-Have fun!
-
 
