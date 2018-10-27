@@ -1,5 +1,5 @@
 module Main where
-  import QuoteLookup (runRequest, printResult)
+  import QuoteLookup (runAndParseNew, printResult)
   import System.Environment (getArgs)
 
   main :: IO ()
@@ -9,8 +9,8 @@ module Main where
     case args of
       a1:as -> do
         putStrLn $ "Running QuoteLookup using as input: " ++ a1
-        mr <- runRequest a1
-        maybe (putStrLn "No Result") printResult mr
+        r <- runAndParseNew a1
+        printResult r
         putStrLn "Done with QuoteLookup"
       [] -> do
         putStrLn "Please provide a file of transactions"

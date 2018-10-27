@@ -1,11 +1,11 @@
 module Main where
-  import QuoteLookup (runRequestStdin, printResult)
+  import QuoteLookup (runAndParseFromStdinNew, printResult)
   import System.Environment (getArgs)
 
   main :: IO ()
   main = do
     putStrLn $ "Running QuoteLookup using stdin"
-    mr <- runRequestStdin
-    maybe (putStrLn "No Result") printResult mr
+    r <- runAndParseFromStdinNew
+    printResult r
     putStrLn "Done with QuoteLookup"
 
